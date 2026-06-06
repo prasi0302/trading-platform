@@ -1,0 +1,45 @@
+version: "3.8"
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  localstack:
+    image: localstack/localstack:latest
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=dynamodb,s3
+      - DEFAULT_REGION=us-east-1
+    volumes:
+      - "./scripts/localstack-init.sh:/etc/localstack/init/ready.d/init.sh"
+
+  market-data:
+    build:
+      context: .
+      dockerfile: services/market-data/Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      - PORT=8001
+      - TICK_INTERVAL_MS=1000
+      - REDIS_URL=redis://redis:6379
+      - DYNAMODB_TABLE=market-data-ticks
+      - S3_BUCKET=trading-app-historical
+      - AWS_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - LOG_LEVEL=INFO
+    depends_on:
+      redis:
+        condition: service_healthy
+      localstack:
+        condition: service_started
