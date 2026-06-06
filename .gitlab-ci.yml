@@ -113,14 +113,15 @@ test-ui:
 # ============================================================
 .build_template: &build_template
   stage: build
-  image: docker:24
+  image: amazon/aws-cli:latest
   services:
     - docker:24-dind
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
   <<: *aws_auth
   before_script:
-    - apk add --no-cache curl jq
-    - curl -sL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
-    - unzip -q /tmp/awscliv2.zip -d /tmp && /tmp/aws/install
+    - yum install -y docker jq
     - >
       export $(printf "AWS_ACCESS_KEY_ID=%s AWS_SECRET_ACCESS_KEY=%s AWS_SESSION_TOKEN=%s"
       $(aws sts assume-role-with-web-identity
