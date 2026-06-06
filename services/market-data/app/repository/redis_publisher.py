@@ -1,6 +1,5 @@
 """Redis pub/sub publisher with graceful degradation."""
 
-import asyncio
 import logging
 
 import redis.asyncio as aioredis
@@ -81,26 +80,27 @@ class RedisPublisher:
         except Exception:
             return False
 
+    def _enter_degraded_state(self) -> None:
+        """Enter degraded state — skip publishing for cooldown period."""
+        import time
+        self._degraded_until = time.monotonic() + DEGRADED_COOLDOWN_SECONDS
+        logger.warning(
+            "Redis publisher entering degraded state for %ds",
+            DEGRADED_COOLDOWN_SECONDS,
+        )
+
     def _is_degraded(self) -> bool:
         """Check if publisher is in degraded cooldown state."""
         if self._degraded_until == 0:
             return False
-        current_time = asyncio.get_event_loop().time()
+        import time
+        current_time = time.monotonic()
         if current_time >= self._degraded_until:
             self._degraded_until = 0
             self._consecutive_failures = 0
             logger.info("Redis publisher exiting degraded state, retrying")
             return False
         return True
-
-    def _enter_degraded_state(self) -> None:
-        """Enter degraded state — skip publishing for cooldown period."""
-        current_time = asyncio.get_event_loop().time()
-        self._degraded_until = current_time + DEGRADED_COOLDOWN_SECONDS
-        logger.warning(
-            "Redis publisher entering degraded state for %ds",
-            DEGRADED_COOLDOWN_SECONDS,
-        )
 
     async def _try_reconnect(self) -> None:
         """Attempt to reconnect to Redis."""
