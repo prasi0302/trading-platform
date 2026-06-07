@@ -108,7 +108,8 @@ test-ui:
     DOCKER_HOST: tcp://docker:2375
     DOCKER_TLS_CERTDIR: ""
   before_script:
-    - yum install -y docker
+    - curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-24.0.9.tgz | tar xz --strip-components=1 -C /usr/local/bin docker/docker
+    - docker --version
     - aws sts get-caller-identity
   script:
     - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
