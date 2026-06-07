@@ -12,21 +12,8 @@ variables:
   ECS_CLUSTER: TradingAppStack-TradingCluster7BA98BCF-KXNiCrjc7TOU
   IMAGE_TAG: $CI_COMMIT_SHORT_SHA
 
-# AWS authentication via GitLab runner credential vendor
-# The gitlab.aws.dev runners provide AWS credentials automatically
-# via the built-in credential vendor. We just need to assume our target role.
-.aws_auth: &aws_auth
-  before_script:
-    - >
-      if command -v aws &> /dev/null; then
-        CREDS=$(aws sts assume-role
-        --role-arn arn:aws:iam::${AWS_ACCOUNT_ID}:role/GitLabCIRole
-        --role-session-name "GitLabCI-${CI_PROJECT_ID}-${CI_PIPELINE_ID}"
-        --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]'
-        --output text 2>/dev/null) && \
-        export $(printf "AWS_ACCESS_KEY_ID=%s AWS_SECRET_ACCESS_KEY=%s AWS_SESSION_TOKEN=%s" $CREDS) && \
-        aws sts get-caller-identity || echo "Using runner default credentials"
-      fi
+# AWS authentication via CI/CD variables (set in project settings)
+# Variables: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN, AWS_DEFAULT_REGION
 
 # ============================================================
 # TEST STAGE
@@ -121,17 +108,7 @@ test-ui:
     DOCKER_HOST: tcp://docker:2375
     DOCKER_TLS_CERTDIR: ""
   before_script:
-    - yum install -y docker jq
-    - aws sts get-caller-identity || echo "No default creds, trying role assumption"
-    - >
-      CREDS=$(aws sts assume-role
-      --role-arn arn:aws:iam::${AWS_ACCOUNT_ID}:role/GitLabCIRole
-      --role-session-name "GitLabCI-${CI_PROJECT_ID}-${CI_PIPELINE_ID}"
-      --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]'
-      --output text 2>/dev/null) &&
-      export AWS_ACCESS_KEY_ID=$(echo $CREDS | cut -d' ' -f1) &&
-      export AWS_SECRET_ACCESS_KEY=$(echo $CREDS | cut -d' ' -f2) &&
-      export AWS_SESSION_TOKEN=$(echo $CREDS | cut -d' ' -f3) || true
+    - yum install -y docker
     - aws sts get-caller-identity
   script:
     - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
@@ -175,16 +152,6 @@ build-ui:
   before_script:
     - curl -sL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
     - unzip -q /tmp/awscliv2.zip -d /tmp && /tmp/aws/install
-    - aws sts get-caller-identity || echo "No default creds, trying role assumption"
-    - >
-      CREDS=$(aws sts assume-role
-      --role-arn arn:aws:iam::${AWS_ACCOUNT_ID}:role/GitLabCIRole
-      --role-session-name "GitLabCI-${CI_PROJECT_ID}-${CI_PIPELINE_ID}"
-      --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]'
-      --output text 2>/dev/null) &&
-      export AWS_ACCESS_KEY_ID=$(echo $CREDS | cut -d' ' -f1) &&
-      export AWS_SECRET_ACCESS_KEY=$(echo $CREDS | cut -d' ' -f2) &&
-      export AWS_SESSION_TOKEN=$(echo $CREDS | cut -d' ' -f3) || true
     - aws sts get-caller-identity
   script:
     - cd frontend && npm ci && npx vite build
@@ -199,7 +166,6 @@ build-ui:
 .deploy_template: &deploy_template
   stage: deploy
   image: amazon/aws-cli:latest
-  <<: *aws_auth
   script:
     - |
       TASK_DEF=$(aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE --query 'services[0].taskDefinition' --output text)
@@ -242,7 +208,6 @@ deploy-ws-gateway:
 deploy-ui:
   stage: deploy
   image: amazon/aws-cli:latest
-  <<: *aws_auth
   script:
     - aws cloudfront create-invalidation --distribution-id $CF_DISTRIBUTION_ID --paths "/*"
   variables:
@@ -254,7 +219,6 @@ deploy-ui:
 .verify_template: &verify_template
   stage: verify
   image: curlimages/curl:latest
-  <<: *aws_auth
   script:
     - sleep 30
     - |
@@ -317,7 +281,6 @@ verify-ui:
 .rollback_template: &rollback_template
   stage: rollback
   image: amazon/aws-cli:latest
-  <<: *aws_auth
   when: manual
   script:
     - |
@@ -361,7 +324,6 @@ rollback-ws-gateway:
 rollback-ui:
   stage: rollback
   image: amazon/aws-cli:latest
-  <<: *aws_auth
   when: manual
   script:
     - echo "⏪ UI rollback - redeploy previous frontend build from S3 versioning"
