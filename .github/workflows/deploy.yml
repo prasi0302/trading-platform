@@ -179,10 +179,10 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
       - run: |
-          TASK_DEF=$(aws ecs describe-services --cluster $ECS_CLUSTER --services TradingAppStack-MarketDataServiceE5B2BA03-bQfuNIePfocB-bQfuNIePfocB-bQfuNIePfocB-bQfuNIePfocB --query 'services[0].taskDefinition' --output text)
+          TASK_DEF=$(aws ecs describe-services --cluster $ECS_CLUSTER --services TradingAppStack-MarketDataServiceE5B2BA03-bQfuNIePfocB --query 'services[0].taskDefinition' --output text)
           NEW_TASK_DEF=$(aws ecs describe-task-definition --task-definition $TASK_DEF --query 'taskDefinition' | jq --arg IMG "$ECR_REGISTRY/trading-market-data:${{ github.sha }}" '.containerDefinitions[0].image = $IMG | del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy)')
           NEW_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --query 'taskDefinition.taskDefinitionArn' --output text)
-          aws ecs update-service --cluster $ECS_CLUSTER --service TradingAppStack-MarketDataServiceE5B2BA03-bQfuNIePfocB-bQfuNIePfocB-bQfuNIePfocB-bQfuNIePfocB --task-definition $NEW_ARN --force-new-deployment
+          aws ecs update-service --cluster $ECS_CLUSTER --service TradingAppStack-MarketDataServiceE5B2BA03-bQfuNIePfocB --task-definition $NEW_ARN --force-new-deployment
 
   deploy-order:
     needs: [build-order]
@@ -194,10 +194,10 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
       - run: |
-          TASK_DEF=$(aws ecs describe-services --cluster $ECS_CLUSTER --services TradingAppStack-OrderServiceC448479E-k13LPyEkz94G-k13LPyEkz94G-k13LPyEkz94G-k13LPyEkz94G --query 'services[0].taskDefinition' --output text)
+          TASK_DEF=$(aws ecs describe-services --cluster $ECS_CLUSTER --services TradingAppStack-OrderServiceC448479E-k13LPyEkz94G --query 'services[0].taskDefinition' --output text)
           NEW_TASK_DEF=$(aws ecs describe-task-definition --task-definition $TASK_DEF --query 'taskDefinition' | jq --arg IMG "$ECR_REGISTRY/trading-order:${{ github.sha }}" '.containerDefinitions[0].image = $IMG | del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy)')
           NEW_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --query 'taskDefinition.taskDefinitionArn' --output text)
-          aws ecs update-service --cluster $ECS_CLUSTER --service TradingAppStack-OrderServiceC448479E-k13LPyEkz94G-k13LPyEkz94G-k13LPyEkz94G-k13LPyEkz94G --task-definition $NEW_ARN --force-new-deployment
+          aws ecs update-service --cluster $ECS_CLUSTER --service TradingAppStack-OrderServiceC448479E-k13LPyEkz94G --task-definition $NEW_ARN --force-new-deployment
 
   deploy-portfolio:
     needs: [build-portfolio]
@@ -209,10 +209,10 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
       - run: |
-          TASK_DEF=$(aws ecs describe-services --cluster $ECS_CLUSTER --services TradingAppStack-PortfolioServiceD49F49E3-Ig0ZuWXOKcI8-Ig0ZuWXOKcI8-Ig0ZuWXOKcI8-Ig0ZuWXOKcI8 --query 'services[0].taskDefinition' --output text)
+          TASK_DEF=$(aws ecs describe-services --cluster $ECS_CLUSTER --services TradingAppStack-PortfolioServiceD49F49E3-Ig0ZuWXOKcI8 --query 'services[0].taskDefinition' --output text)
           NEW_TASK_DEF=$(aws ecs describe-task-definition --task-definition $TASK_DEF --query 'taskDefinition' | jq --arg IMG "$ECR_REGISTRY/trading-portfolio:${{ github.sha }}" '.containerDefinitions[0].image = $IMG | del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy)')
           NEW_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --query 'taskDefinition.taskDefinitionArn' --output text)
-          aws ecs update-service --cluster $ECS_CLUSTER --service TradingAppStack-PortfolioServiceD49F49E3-Ig0ZuWXOKcI8-Ig0ZuWXOKcI8-Ig0ZuWXOKcI8-Ig0ZuWXOKcI8 --task-definition $NEW_ARN --force-new-deployment
+          aws ecs update-service --cluster $ECS_CLUSTER --service TradingAppStack-PortfolioServiceD49F49E3-Ig0ZuWXOKcI8 --task-definition $NEW_ARN --force-new-deployment
 
   deploy-alert:
     needs: [build-alert]
@@ -224,10 +224,10 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
       - run: |
-          TASK_DEF=$(aws ecs describe-services --cluster $ECS_CLUSTER --services TradingAppStack-AlertServiceA8D8D244-PKzTpMdf5TGm-PKzTpMdf5TGm-PKzTpMdf5TGm-PKzTpMdf5TGm --query 'services[0].taskDefinition' --output text)
+          TASK_DEF=$(aws ecs describe-services --cluster $ECS_CLUSTER --services TradingAppStack-AlertServiceA8D8D244-PKzTpMdf5TGm --query 'services[0].taskDefinition' --output text)
           NEW_TASK_DEF=$(aws ecs describe-task-definition --task-definition $TASK_DEF --query 'taskDefinition' | jq --arg IMG "$ECR_REGISTRY/trading-alert:${{ github.sha }}" '.containerDefinitions[0].image = $IMG | del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy)')
           NEW_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --query 'taskDefinition.taskDefinitionArn' --output text)
-          aws ecs update-service --cluster $ECS_CLUSTER --service TradingAppStack-AlertServiceA8D8D244-PKzTpMdf5TGm-PKzTpMdf5TGm-PKzTpMdf5TGm-PKzTpMdf5TGm --task-definition $NEW_ARN --force-new-deployment
+          aws ecs update-service --cluster $ECS_CLUSTER --service TradingAppStack-AlertServiceA8D8D244-PKzTpMdf5TGm --task-definition $NEW_ARN --force-new-deployment
 
   deploy-ws-gateway:
     needs: [build-ws-gateway]
@@ -239,10 +239,10 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
       - run: |
-          TASK_DEF=$(aws ecs describe-services --cluster $ECS_CLUSTER --services TradingAppStack-WsGatewayServiceE53031B4-iYo9fr0dtZrO-iYo9fr0dtZrO-iYo9fr0dtZrO-iYo9fr0dtZrO --query 'services[0].taskDefinition' --output text)
+          TASK_DEF=$(aws ecs describe-services --cluster $ECS_CLUSTER --services TradingAppStack-WsGatewayServiceE53031B4-iYo9fr0dtZrO --query 'services[0].taskDefinition' --output text)
           NEW_TASK_DEF=$(aws ecs describe-task-definition --task-definition $TASK_DEF --query 'taskDefinition' | jq --arg IMG "$ECR_REGISTRY/trading-ws-gateway:${{ github.sha }}" '.containerDefinitions[0].image = $IMG | del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy)')
           NEW_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --query 'taskDefinition.taskDefinitionArn' --output text)
-          aws ecs update-service --cluster $ECS_CLUSTER --service TradingAppStack-WsGatewayServiceE53031B4-iYo9fr0dtZrO-iYo9fr0dtZrO-iYo9fr0dtZrO-iYo9fr0dtZrO --task-definition $NEW_ARN --force-new-deployment
+          aws ecs update-service --cluster $ECS_CLUSTER --service TradingAppStack-WsGatewayServiceE53031B4-iYo9fr0dtZrO --task-definition $NEW_ARN --force-new-deployment
 
   deploy-ui:
     needs: [build-ui]
