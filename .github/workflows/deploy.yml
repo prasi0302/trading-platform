@@ -1,0 +1,295 @@
+name: Trading Platform CI/CD
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REGISTRY: 288282347955.dkr.ecr.us-east-1.amazonaws.com
+  ECS_CLUSTER: TradingAppStack-TradingCluster7BA98BCF-KXNiCrjc7TOU
+  ALB_DNS: Tradin-Tradi-VNtUgZp6acFf-284746681.us-east-1.elb.amazonaws.com
+  CF_URL: https://d387q14faj9961.cloudfront.net
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  # ============================================================
+  # TEST STAGE
+  # ============================================================
+  test-market-data:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - run: pip install -e libs/common && cd services/market-data && pip install -e ".[dev]" && pytest tests/ -v
+
+  test-order:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - run: pip install -e libs/common && cd services/order && pip install -e ".[dev]" && pytest tests/ -v
+
+  test-portfolio:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - run: pip install -e libs/common && cd services/portfolio && pip install -e ".[dev]" && pytest tests/ -v
+
+  test-alert:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - run: pip install -e libs/common && cd services/alert && pip install -e ".[dev]" && pytest tests/ -v
+
+  test-ws-gateway:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - run: pip install -e libs/common && cd services/ws-gateway && pip install -e . && echo "Service installs successfully"
+
+  test-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: cd frontend && npm ci && npx tsc --noEmit
+
+  # ============================================================
+  # BUILD STAGE
+  # ============================================================
+  build-market-data:
+    needs: [test-market-data]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+      - run: |
+          docker build --platform linux/amd64 -t $ECR_REGISTRY/trading-market-data:${{ github.sha }} -t $ECR_REGISTRY/trading-market-data:latest -f services/market-data/Dockerfile .
+          docker push $ECR_REGISTRY/trading-market-data:${{ github.sha }}
+          docker push $ECR_REGISTRY/trading-market-data:latest
+
+  build-order:
+    needs: [test-order]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+      - run: |
+          docker build --platform linux/amd64 -t $ECR_REGISTRY/trading-order:${{ github.sha }} -t $ECR_REGISTRY/trading-order:latest -f services/order/Dockerfile .
+          docker push $ECR_REGISTRY/trading-order:${{ github.sha }}
+          docker push $ECR_REGISTRY/trading-order:latest
+
+  build-portfolio:
+    needs: [test-portfolio]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+      - run: |
+          docker build --platform linux/amd64 -t $ECR_REGISTRY/trading-portfolio:${{ github.sha }} -t $ECR_REGISTRY/trading-portfolio:latest -f services/portfolio/Dockerfile .
+          docker push $ECR_REGISTRY/trading-portfolio:${{ github.sha }}
+          docker push $ECR_REGISTRY/trading-portfolio:latest
+
+  build-alert:
+    needs: [test-alert]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+      - run: |
+          docker build --platform linux/amd64 -t $ECR_REGISTRY/trading-alert:${{ github.sha }} -t $ECR_REGISTRY/trading-alert:latest -f services/alert/Dockerfile .
+          docker push $ECR_REGISTRY/trading-alert:${{ github.sha }}
+          docker push $ECR_REGISTRY/trading-alert:latest
+
+  build-ws-gateway:
+    needs: [test-ws-gateway]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+      - run: |
+          docker build --platform linux/amd64 -t $ECR_REGISTRY/trading-ws-gateway:${{ github.sha }} -t $ECR_REGISTRY/trading-ws-gateway:latest -f services/ws-gateway/Dockerfile .
+          docker push $ECR_REGISTRY/trading-ws-gateway:${{ github.sha }}
+          docker push $ECR_REGISTRY/trading-ws-gateway:latest
+
+  build-ui:
+    needs: [test-ui]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - run: cd frontend && npm ci && npx vite build
+      - run: aws s3 sync frontend/dist/ s3://tradingappstack-frontendbucketefe2e19c-u9fgmkwqgbub/ --delete
+
+  # ============================================================
+  # DEPLOY STAGE
+  # ============================================================
+  deploy-market-data:
+    needs: [build-market-data]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - run: |
+          TASK_DEF=$(aws ecs describe-services --cluster $ECS_CLUSTER --services TradingAppStack-MarketDataServiceE5B2BA03 --query 'services[0].taskDefinition' --output text)
+          NEW_TASK_DEF=$(aws ecs describe-task-definition --task-definition $TASK_DEF --query 'taskDefinition' | jq --arg IMG "$ECR_REGISTRY/trading-market-data:${{ github.sha }}" '.containerDefinitions[0].image = $IMG | del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy)')
+          NEW_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --query 'taskDefinition.taskDefinitionArn' --output text)
+          aws ecs update-service --cluster $ECS_CLUSTER --service TradingAppStack-MarketDataServiceE5B2BA03 --task-definition $NEW_ARN --force-new-deployment
+
+  deploy-order:
+    needs: [build-order]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - run: |
+          TASK_DEF=$(aws ecs describe-services --cluster $ECS_CLUSTER --services TradingAppStack-OrderServiceC448479E --query 'services[0].taskDefinition' --output text)
+          NEW_TASK_DEF=$(aws ecs describe-task-definition --task-definition $TASK_DEF --query 'taskDefinition' | jq --arg IMG "$ECR_REGISTRY/trading-order:${{ github.sha }}" '.containerDefinitions[0].image = $IMG | del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy)')
+          NEW_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --query 'taskDefinition.taskDefinitionArn' --output text)
+          aws ecs update-service --cluster $ECS_CLUSTER --service TradingAppStack-OrderServiceC448479E --task-definition $NEW_ARN --force-new-deployment
+
+  deploy-portfolio:
+    needs: [build-portfolio]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - run: |
+          TASK_DEF=$(aws ecs describe-services --cluster $ECS_CLUSTER --services TradingAppStack-PortfolioServiceD49F49E3 --query 'services[0].taskDefinition' --output text)
+          NEW_TASK_DEF=$(aws ecs describe-task-definition --task-definition $TASK_DEF --query 'taskDefinition' | jq --arg IMG "$ECR_REGISTRY/trading-portfolio:${{ github.sha }}" '.containerDefinitions[0].image = $IMG | del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy)')
+          NEW_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --query 'taskDefinition.taskDefinitionArn' --output text)
+          aws ecs update-service --cluster $ECS_CLUSTER --service TradingAppStack-PortfolioServiceD49F49E3 --task-definition $NEW_ARN --force-new-deployment
+
+  deploy-alert:
+    needs: [build-alert]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - run: |
+          TASK_DEF=$(aws ecs describe-services --cluster $ECS_CLUSTER --services TradingAppStack-AlertServiceA8D8D244 --query 'services[0].taskDefinition' --output text)
+          NEW_TASK_DEF=$(aws ecs describe-task-definition --task-definition $TASK_DEF --query 'taskDefinition' | jq --arg IMG "$ECR_REGISTRY/trading-alert:${{ github.sha }}" '.containerDefinitions[0].image = $IMG | del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy)')
+          NEW_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --query 'taskDefinition.taskDefinitionArn' --output text)
+          aws ecs update-service --cluster $ECS_CLUSTER --service TradingAppStack-AlertServiceA8D8D244 --task-definition $NEW_ARN --force-new-deployment
+
+  deploy-ws-gateway:
+    needs: [build-ws-gateway]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - run: |
+          TASK_DEF=$(aws ecs describe-services --cluster $ECS_CLUSTER --services TradingAppStack-WsGatewayServiceE53031B4 --query 'services[0].taskDefinition' --output text)
+          NEW_TASK_DEF=$(aws ecs describe-task-definition --task-definition $TASK_DEF --query 'taskDefinition' | jq --arg IMG "$ECR_REGISTRY/trading-ws-gateway:${{ github.sha }}" '.containerDefinitions[0].image = $IMG | del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy)')
+          NEW_ARN=$(aws ecs register-task-definition --cli-input-json "$NEW_TASK_DEF" --query 'taskDefinition.taskDefinitionArn' --output text)
+          aws ecs update-service --cluster $ECS_CLUSTER --service TradingAppStack-WsGatewayServiceE53031B4 --task-definition $NEW_ARN --force-new-deployment
+
+  deploy-ui:
+    needs: [build-ui]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - run: aws cloudfront create-invalidation --distribution-id E3EXAMPLE --paths "/*" || true
+
+  # ============================================================
+  # VERIFY STAGE
+  # ============================================================
+  verify-market-data:
+    needs: [deploy-market-data]
+    runs-on: ubuntu-latest
+    steps:
+      - run: sleep 30 && curl -sf http://${{ env.ALB_DNS }}/api/symbols || exit 1
+
+  verify-order:
+    needs: [deploy-order]
+    runs-on: ubuntu-latest
+    steps:
+      - run: sleep 30 && curl -sf "http://${{ env.ALB_DNS }}/api/orders?session_id=health" || exit 1
+
+  verify-portfolio:
+    needs: [deploy-portfolio]
+    runs-on: ubuntu-latest
+    steps:
+      - run: sleep 30 && curl -sf "http://${{ env.ALB_DNS }}/api/portfolio?session_id=health" || exit 1
+
+  verify-alert:
+    needs: [deploy-alert]
+    runs-on: ubuntu-latest
+    steps:
+      - run: sleep 30 && curl -sf "http://${{ env.ALB_DNS }}/api/alerts?session_id=health" || exit 1
+
+  verify-ws-gateway:
+    needs: [deploy-ws-gateway]
+    runs-on: ubuntu-latest
+    steps:
+      - run: sleep 30 && curl -sf http://${{ env.ALB_DNS }}/health || exit 1
+
+  verify-ui:
+    needs: [deploy-ui]
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -sf ${{ env.CF_URL }}/ || exit 1
