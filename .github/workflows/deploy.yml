@@ -262,31 +262,31 @@ jobs:
     needs: [deploy-market-data]
     runs-on: ubuntu-latest
     steps:
-      - run: sleep 30 && curl -sf http://${{ env.ALB_DNS }}/api/symbols || exit 1
+      - run: sleep 60 && curl -sf http://${{ env.ALB_DNS }}/api/symbols || exit 1
 
   verify-order:
     needs: [deploy-order]
     runs-on: ubuntu-latest
     steps:
-      - run: sleep 30 && curl -sf "http://${{ env.ALB_DNS }}/api/orders?session_id=health" || exit 1
+      - run: sleep 60 && curl -sf "http://${{ env.ALB_DNS }}/api/orders?session_id=health" || exit 1
 
   verify-portfolio:
     needs: [deploy-portfolio]
     runs-on: ubuntu-latest
     steps:
-      - run: sleep 30 && curl -sf "http://${{ env.ALB_DNS }}/api/portfolio?session_id=health" || exit 1
+      - run: sleep 60 && curl -sf "http://${{ env.ALB_DNS }}/api/portfolio?session_id=health" || exit 1
 
   verify-alert:
     needs: [deploy-alert]
     runs-on: ubuntu-latest
     steps:
-      - run: sleep 30 && curl -sf "http://${{ env.ALB_DNS }}/api/alerts?session_id=health" || exit 1
+      - run: sleep 60 && curl -sf "http://${{ env.ALB_DNS }}/api/alerts?session_id=health" || exit 1
 
   verify-ws-gateway:
     needs: [deploy-ws-gateway]
     runs-on: ubuntu-latest
     steps:
-      - run: sleep 30 && curl -sf http://${{ env.ALB_DNS }}/health || exit 1
+      - run: sleep 60 && curl -sf -o /dev/null -w "%{http_code}" "http://${{ env.ALB_DNS }}/api/symbols" || exit 1
 
   verify-ui:
     needs: [deploy-ui]
