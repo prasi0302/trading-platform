@@ -7,7 +7,7 @@ DATABASE_URL: str = os.getenv(
     "postgresql+asyncpg://postgres:postgres@localhost:5432/trading_app",
 )
 REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
-MARKET_DATA_URL: str = "http://market-data-v2.internal:8001"  # Updated service discovery endpoint
+MARKET_DATA_URL: str = os.getenv("MARKET_DATA_URL", "http://localhost:8001")
 PORTFOLIO_SERVICE_URL: str = os.getenv("PORTFOLIO_SERVICE_URL", "http://localhost:8003")
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 PORT: int = int(os.getenv("PORT", "8002"))
