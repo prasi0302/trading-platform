@@ -293,3 +293,52 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: curl -sf ${{ env.CF_URL }}/ || exit 1
+
+
+  # ============================================================
+  # NOTIFY DEVOPS AGENT ON FAILURE
+  # ============================================================
+  notify-devops-agent:
+    if: failure()
+    needs: [verify-market-data, verify-order, verify-portfolio, verify-alert, verify-ws-gateway, verify-ui]
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
+          INCIDENT_ID="github-run-${{ github.run_id }}"
+          
+          PAYLOAD=$(cat <<PAYLOADEOF
+          {
+            "eventType": "incident",
+            "incidentId": "$INCIDENT_ID",
+            "action": "created",
+            "priority": "HIGH",
+            "title": "Pipeline failed: ${{ github.workflow }} (run #${{ github.run_number }})",
+            "description": "GitHub Actions workflow '${{ github.workflow }}' failed in repository ${{ github.repository }}. Commit: ${{ github.sha }}. Branch: ${{ github.ref_name }}. Check https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }} for details.",
+            "service": "trading-platform",
+            "timestamp": "$TIMESTAMP",
+            "data": {
+              "metadata": {
+                "region": "us-east-1",
+                "environment": "production",
+                "repository": "${{ github.repository }}",
+                "run_id": "${{ github.run_id }}",
+                "commit_sha": "${{ github.sha }}",
+                "branch": "${{ github.ref_name }}"
+              }
+            }
+          }
+          PAYLOADEOF
+          )
+
+          # Compute HMAC signature
+          SIGNATURE=$(echo -n "${TIMESTAMP}:${PAYLOAD}" | openssl dgst -sha256 -hmac "${{ secrets.DEVOPS_AGENT_WEBHOOK_SECRET }}" -binary | base64)
+
+          # Send webhook
+          curl -X POST "${{ secrets.DEVOPS_AGENT_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -H "x-amzn-event-timestamp: $TIMESTAMP" \
+            -H "x-amzn-event-signature: $SIGNATURE" \
+            -d "$PAYLOAD"
+          
+          echo "DevOps Agent investigation triggered for run ${{ github.run_id }}"
