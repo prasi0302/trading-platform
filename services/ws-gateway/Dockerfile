@@ -10,6 +10,9 @@ RUN pip install --no-cache-dir .
 
 COPY services/ws-gateway/app ./app
 
-EXPOSE 8005
+# Run as non-root user
+RUN useradd -r -s /bin/false appuser
+USER appuser
 
+EXPOSE 8005
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8005"]

@@ -13,6 +13,9 @@ RUN pip install --no-cache-dir .
 # Copy application code
 COPY services/market-data/app ./app
 
-EXPOSE 8001
+# Run as non-root user
+RUN useradd -r -s /bin/false appuser
+USER appuser
 
+EXPOSE 8001
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001"]

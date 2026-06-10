@@ -9,7 +9,6 @@ from aws_cdk import (
     Duration,
     RemovalPolicy,
     CfnOutput,
-    SecretValue,
     aws_ec2 as ec2,
     aws_ecs as ecs,
     aws_elasticache as elasticache,
@@ -56,7 +55,7 @@ class TradingAppStack(Stack):
         rds_sg.add_ingress_rule(ecs_sg, ec2.Port.tcp(5432), "From ECS tasks")
 
         # ============================================================
-        # ElastiCache Redis
+        # ElastiCache Redis (with encryption)
         # ============================================================
         redis_subnet_group = elasticache.CfnSubnetGroup(
             self, "RedisSubnetGroup",
@@ -64,17 +63,21 @@ class TradingAppStack(Stack):
             subnet_ids=[s.subnet_id for s in vpc.private_subnets],
         )
 
-        redis_cluster = elasticache.CfnCacheCluster(
+        redis_cluster = elasticache.CfnReplicationGroup(
             self, "RedisCluster",
-            cache_node_type="cache.t3.micro",
+            replication_group_description="Trading app Redis cluster",
             engine="redis",
-            num_cache_nodes=1,
-            vpc_security_group_ids=[redis_sg.security_group_id],
+            cache_node_type="cache.t3.micro",
+            num_cache_clusters=1,
+            automatic_failover_enabled=False,
             cache_subnet_group_name=redis_subnet_group.ref,
+            security_group_ids=[redis_sg.security_group_id],
+            transit_encryption_enabled=True,
+            at_rest_encryption_enabled=True,
         )
 
         # ============================================================
-        # RDS PostgreSQL
+        # RDS PostgreSQL (with Secrets Manager + encryption)
         # ============================================================
         db_instance = rds.DatabaseInstance(
             self, "TradingDb",
@@ -84,16 +87,16 @@ class TradingAppStack(Stack):
             vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS),
             security_groups=[rds_sg],
             database_name="trading_app",
-            credentials=rds.Credentials.from_password(
-                username="postgres",
-                password=SecretValue.unsafe_plain_text("TradingApp2026!"),
-            ),
+            credentials=rds.Credentials.from_generated_secret("postgres"),
+            storage_encrypted=True,
             allocated_storage=20,
             max_allocated_storage=50,
             removal_policy=RemovalPolicy.DESTROY,
             deletion_protection=False,
             backup_retention=Duration.days(1),
         )
+
+        db_secret = db_instance.secret
 
         # ============================================================
         # DynamoDB Table
@@ -125,11 +128,25 @@ class TradingAppStack(Stack):
         )
 
         # ============================================================
+        # ECR Repositories (for CI/CD pipeline)
+        # ============================================================
+        from aws_cdk import aws_ecr as ecr
+
+        service_names = ["trading-market-data", "trading-order", "trading-portfolio", "trading-alert", "trading-ws-gateway"]
+        for repo_name in service_names:
+            ecr.Repository(
+                self, f"Ecr{repo_name.replace('-', '')}",
+                repository_name=repo_name,
+                removal_policy=RemovalPolicy.DESTROY,
+                empty_on_delete=True,
+            )
+
+        # ============================================================
         # ECS Cluster
         # ============================================================
         cluster = ecs.Cluster(self, "TradingCluster", vpc=vpc)
 
-        # Shared task execution role
+        # Shared task execution role (needs Secrets Manager access for DB secret)
         task_execution_role = iam.Role(
             self, "TaskExecutionRole",
             assumed_by=iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
@@ -137,14 +154,37 @@ class TradingAppStack(Stack):
                 iam.ManagedPolicy.from_aws_managed_policy_name("service-role/AmazonECSTaskExecutionRolePolicy"),
             ],
         )
+        db_secret.grant_read(task_execution_role)
 
-        # Shared task role with permissions
-        task_role = iam.Role(
-            self, "TaskRole",
+        # Per-service task roles (least privilege)
+        market_data_task_role = iam.Role(
+            self, "MarketDataTaskRole",
             assumed_by=iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
         )
-        ticks_table.grant_read_write_data(task_role)
-        historical_bucket.grant_read_write(task_role)
+        ticks_table.grant_read_write_data(market_data_task_role)
+        historical_bucket.grant_read_write(market_data_task_role)
+
+        # Order, Portfolio, Alert, WsGateway — no extra AWS permissions needed
+        # (DB access is via connection string, not IAM)
+        order_task_role = iam.Role(
+            self, "OrderTaskRole",
+            assumed_by=iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
+        )
+
+        portfolio_task_role = iam.Role(
+            self, "PortfolioTaskRole",
+            assumed_by=iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
+        )
+
+        alert_task_role = iam.Role(
+            self, "AlertTaskRole",
+            assumed_by=iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
+        )
+
+        ws_gateway_task_role = iam.Role(
+            self, "WsGatewayTaskRole",
+            assumed_by=iam.ServicePrincipal("ecs-tasks.amazonaws.com"),
+        )
 
         # ============================================================
         # ALB
@@ -164,6 +204,8 @@ class TradingAppStack(Stack):
         def create_service(
             name: str, port: int, container_image: str,
             environment: dict, priority: int, path_patterns: list[str],
+            task_role: iam.Role = order_task_role,
+            secrets: dict = None,
             health_check_path: str = "/health",
         ) -> ecs.FargateService:
             task_def = ecs.FargateTaskDefinition(
@@ -173,6 +215,10 @@ class TradingAppStack(Stack):
                 execution_role=task_execution_role,
                 task_role=task_role,
             )
+
+            container_secrets = {}
+            if secrets:
+                container_secrets = secrets
 
             task_def.add_container(
                 f"{name}Container",
@@ -185,6 +231,7 @@ class TradingAppStack(Stack):
                 ),
                 port_mappings=[ecs.PortMapping(container_port=port)],
                 environment=environment,
+                secrets=container_secrets,
                 logging=ecs.LogDrivers.aws_logs(
                     stream_prefix=name,
                     log_retention=logs.RetentionDays.ONE_WEEK,
@@ -225,11 +272,9 @@ class TradingAppStack(Stack):
 
             return service
 
-        # Redis and DB endpoints
-        redis_url = f"redis://{redis_cluster.attr_redis_endpoint_address}:6379"
+        # Redis endpoint (TLS-enabled)
+        redis_url = f"rediss://{redis_cluster.attr_primary_end_point_address}:{redis_cluster.attr_primary_end_point_port}"
         db_host = db_instance.db_instance_endpoint_address
-        # Use explicit password for workshop
-        db_url = f"postgresql+asyncpg://postgres:TradingApp2026!@{db_host}:5432/trading_app"
 
         # Inter-service communication via ALB internal DNS
         alb_dns = f"http://{alb.load_balancer_dns_name}"
@@ -237,17 +282,20 @@ class TradingAppStack(Stack):
         # Common environment
         common_env = {
             "REDIS_URL": redis_url,
-            "AWS_REGION": "us-east-1",
             "LOG_LEVEL": "INFO",
         }
+
+        # DB connection URL injected as secret (password resolved at runtime)
+        db_url_secret = ecs.Secret.from_secrets_manager(db_secret, field="password")
 
         # ============================================================
         # Deploy Services
         # ============================================================
 
-        # Market Data Service
+        # Market Data Service (needs DynamoDB + S3)
         create_service(
             name="MarketData", port=8001, container_image="market-data",
+            task_role=market_data_task_role,
             environment={
                 **common_env,
                 "PORT": "8001",
@@ -258,34 +306,43 @@ class TradingAppStack(Stack):
             priority=10, path_patterns=["/api/symbols*", "/api/market*"],
         )
 
-        # Order Service
+        # Order Service (needs DB access via secret)
         create_service(
             name="Order", port=8002, container_image="order",
+            task_role=order_task_role,
             environment={
                 **common_env,
                 "PORT": "8002",
-                "DATABASE_URL": db_url,
+                "DB_HOST": db_host,
+                "DB_NAME": "trading_app",
+                "DB_USER": "postgres",
                 "MARKET_DATA_URL": alb_dns,
                 "PORTFOLIO_SERVICE_URL": alb_dns,
             },
+            secrets={"DB_PASSWORD": db_url_secret},
             priority=20, path_patterns=["/api/orders*"],
         )
 
-        # Portfolio Service
+        # Portfolio Service (needs DB access via secret)
         create_service(
             name="Portfolio", port=8003, container_image="portfolio",
+            task_role=portfolio_task_role,
             environment={
                 **common_env,
                 "PORT": "8003",
-                "DATABASE_URL": db_url,
+                "DB_HOST": db_host,
+                "DB_NAME": "trading_app",
+                "DB_USER": "postgres",
                 "MARKET_DATA_URL": alb_dns,
             },
+            secrets={"DB_PASSWORD": db_url_secret},
             priority=30, path_patterns=["/api/portfolio*"],
         )
 
-        # Alert Service
+        # Alert Service (Redis only, no extra permissions)
         create_service(
             name="Alert", port=8004, container_image="alert",
+            task_role=alert_task_role,
             environment={
                 **common_env,
                 "PORT": "8004",
@@ -293,9 +350,10 @@ class TradingAppStack(Stack):
             priority=40, path_patterns=["/api/alerts*"],
         )
 
-        # WebSocket Gateway
+        # WebSocket Gateway (Redis only, no extra permissions)
         create_service(
             name="WsGateway", port=8005, container_image="ws-gateway",
+            task_role=ws_gateway_task_role,
             environment={
                 **common_env,
                 "PORT": "8005",
@@ -360,6 +418,241 @@ class TradingAppStack(Stack):
         )
 
         # ============================================================
+        # GitHub OIDC Provider + Deploy Role
+        # ============================================================
+        github_oidc_provider = iam.OpenIdConnectProvider(
+            self, "GitHubOIDC",
+            url="https://token.actions.githubusercontent.com",
+            client_ids=["sts.amazonaws.com"],
+        )
+
+        github_deploy_role = iam.Role(
+            self, "GitHubDeployRole",
+            assumed_by=iam.FederatedPrincipal(
+                github_oidc_provider.open_id_connect_provider_arn,
+                conditions={
+                    "StringLike": {
+                        "token.actions.githubusercontent.com:sub": "repo:*:ref:refs/heads/main",
+                    },
+                    "StringEquals": {
+                        "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+                    },
+                },
+                assume_role_action="sts:AssumeRoleWithWebIdentity",
+            ),
+            description="Role assumed by GitHub Actions for CI/CD",
+        )
+
+        # ECR permissions
+        github_deploy_role.add_to_policy(iam.PolicyStatement(
+            actions=[
+                "ecr:GetAuthorizationToken",
+                "ecr:BatchCheckLayerAvailability",
+                "ecr:GetDownloadUrlForLayer",
+                "ecr:BatchGetImage",
+                "ecr:PutImage",
+                "ecr:InitiateLayerUpload",
+                "ecr:UploadLayerPart",
+                "ecr:CompleteLayerUpload",
+                "ecr:CreateRepository",
+                "ecr:DescribeRepositories",
+            ],
+            resources=["*"],
+        ))
+
+        # ECS deploy permissions
+        github_deploy_role.add_to_policy(iam.PolicyStatement(
+            actions=[
+                "ecs:DescribeServices",
+                "ecs:UpdateService",
+                "ecs:DescribeTaskDefinition",
+                "ecs:RegisterTaskDefinition",
+                "ecs:ListServices",
+            ],
+            resources=["*"],
+        ))
+
+        # Pass role for task definitions
+        github_deploy_role.add_to_policy(iam.PolicyStatement(
+            actions=["iam:PassRole"],
+            resources=[
+                task_execution_role.role_arn,
+                market_data_task_role.role_arn,
+                order_task_role.role_arn,
+                portfolio_task_role.role_arn,
+                alert_task_role.role_arn,
+                ws_gateway_task_role.role_arn,
+            ],
+        ))
+
+        # S3 + CloudFront for frontend
+        github_deploy_role.add_to_policy(iam.PolicyStatement(
+            actions=["s3:PutObject", "s3:DeleteObject", "s3:ListBucket"],
+            resources=[
+                frontend_bucket.bucket_arn,
+                f"{frontend_bucket.bucket_arn}/*",
+            ],
+        ))
+        github_deploy_role.add_to_policy(iam.PolicyStatement(
+            actions=["cloudfront:CreateInvalidation"],
+            resources=["*"],
+        ))
+
+        # ============================================================
+        # Lab Infrastructure (CloudWatch + EventBridge + Lambda)
+        # ============================================================
+
+        # CloudWatch Log Groups (created by ECS, reference for metric filters)
+        market_data_log_group = logs.LogGroup(
+            self, "MarketDataLogGroup",
+            log_group_name="/ecs/MarketData",
+            retention=logs.RetentionDays.ONE_WEEK,
+            removal_policy=RemovalPolicy.DESTROY,
+        )
+
+        order_log_group = logs.LogGroup(
+            self, "OrderLogGroup",
+            log_group_name="/ecs/Order",
+            retention=logs.RetentionDays.ONE_WEEK,
+            removal_policy=RemovalPolicy.DESTROY,
+        )
+
+        # Metric Filters
+        market_data_log_group.add_metric_filter(
+            "IAMAccessDenied",
+            filter_pattern=logs.FilterPattern.literal("AccessDeniedException"),
+            metric_namespace="TradingApp",
+            metric_name="IAMAccessDeniedCount",
+            metric_value="1",
+        )
+
+        order_log_group.add_metric_filter(
+            "OrderServiceConnectTimeout",
+            filter_pattern=logs.FilterPattern.any_term("ConnectError", "TimeoutException", "ConnectTimeout", "Name or service not known"),
+            metric_namespace="TradingApp",
+            metric_name="OrderServiceTimeoutErrors",
+            metric_value="1",
+        )
+
+        # CloudWatch Alarms
+        from aws_cdk import aws_cloudwatch as cloudwatch
+
+        iam_alarm = cloudwatch.Alarm(
+            self, "IAMAccessDeniedAlarm",
+            alarm_name="TradingApp-IAM-AccessDenied",
+            metric=cloudwatch.Metric(
+                namespace="TradingApp",
+                metric_name="IAMAccessDeniedCount",
+                statistic="Sum",
+                period=Duration.seconds(60),
+            ),
+            threshold=1,
+            evaluation_periods=1,
+            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
+        )
+
+        timeout_alarm = cloudwatch.Alarm(
+            self, "OrderServiceTimeoutAlarm",
+            alarm_name="TradingApp-Order-ServiceTimeout",
+            metric=cloudwatch.Metric(
+                namespace="TradingApp",
+                metric_name="OrderServiceTimeoutErrors",
+                statistic="Sum",
+                period=Duration.seconds(60),
+            ),
+            threshold=1,
+            evaluation_periods=1,
+            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            treat_missing_data=cloudwatch.TreatMissingData.NOT_BREACHING,
+        )
+
+        # Lambda Webhook Function
+        from aws_cdk import aws_lambda as _lambda
+        from aws_cdk import aws_events as events
+        from aws_cdk import aws_events_targets as targets
+
+        webhook_fn = _lambda.Function(
+            self, "DevOpsWebhookFn",
+            function_name="TradingApp-DevOpsWebhook",
+            runtime=_lambda.Runtime.PYTHON_3_11,
+            handler="index.handler",
+            code=_lambda.Code.from_inline("""
+import json, os, hashlib, hmac, urllib.request, urllib.error
+from datetime import datetime, timezone
+
+def handler(event, context):
+    webhook_url = os.environ.get("WEBHOOK_URL", "")
+    webhook_secret = os.environ.get("WEBHOOK_SECRET", "")
+    if not webhook_url:
+        print("WEBHOOK_URL not configured")
+        return {"statusCode": 200, "body": "no webhook configured"}
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    alarm_name = event.get("detail", {}).get("alarmName", "unknown")
+    alarm_state = event.get("detail", {}).get("state", {}).get("value", "unknown")
+
+    payload = json.dumps({
+        "eventType": "incident",
+        "incidentId": f"cw-alarm-{alarm_name}-{context.aws_request_id[:8]}",
+        "action": "created",
+        "priority": "HIGH",
+        "title": f"CloudWatch Alarm: {alarm_name} is {alarm_state}",
+        "description": f"Alarm {alarm_name} transitioned to {alarm_state}. Check CloudWatch logs for details.",
+        "service": "trading-platform",
+        "timestamp": timestamp,
+        "data": {"metadata": {"region": os.environ.get("AWS_REGION", "us-east-1"), "alarm": alarm_name}}
+    })
+
+    sig_payload = f"{timestamp}:{payload}"
+    signature = hmac.new(webhook_secret.encode(), sig_payload.encode(), hashlib.sha256).digest()
+    import base64
+    sig_b64 = base64.b64encode(signature).decode()
+
+    req = urllib.request.Request(webhook_url, data=payload.encode(), method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("x-amzn-event-timestamp", timestamp)
+    req.add_header("x-amzn-event-signature", sig_b64)
+
+    try:
+        resp = urllib.request.urlopen(req, timeout=10)
+        print(f"Webhook sent: {resp.status}")
+    except urllib.error.URLError as e:
+        print(f"Webhook failed: {e}")
+
+    return {"statusCode": 200}
+"""),
+            timeout=Duration.seconds(30),
+            environment={
+                "WEBHOOK_URL": "",
+                "WEBHOOK_SECRET": "",
+            },
+        )
+
+        # EventBridge Rules → Lambda
+        events.Rule(
+            self, "IAMAlarmRule",
+            rule_name="TradingApp-IAMAlarm-ToDevOps",
+            event_pattern=events.EventPattern(
+                source=["aws.cloudwatch"],
+                detail_type=["CloudWatch Alarm State Change"],
+                detail={"alarmName": ["TradingApp-IAM-AccessDenied"]},
+            ),
+            targets=[targets.LambdaFunction(webhook_fn)],
+        )
+
+        events.Rule(
+            self, "OrderTimeoutRule",
+            rule_name="TradingApp-OrderTimeout-ToDevOps",
+            event_pattern=events.EventPattern(
+                source=["aws.cloudwatch"],
+                detail_type=["CloudWatch Alarm State Change"],
+                detail={"alarmName": ["TradingApp-Order-ServiceTimeout"]},
+            ),
+            targets=[targets.LambdaFunction(webhook_fn)],
+        )
+
+        # ============================================================
         # Outputs
         # ============================================================
         CfnOutput(self, "CloudFrontUrl",
@@ -372,8 +665,20 @@ class TradingAppStack(Stack):
                   value=frontend_bucket.bucket_name,
                   description="S3 bucket for frontend assets")
         CfnOutput(self, "RedisEndpoint",
-                  value=redis_cluster.attr_redis_endpoint_address,
+                  value=redis_cluster.attr_primary_end_point_address,
                   description="Redis endpoint")
         CfnOutput(self, "RdsEndpoint",
                   value=db_instance.db_instance_endpoint_address,
                   description="RDS endpoint")
+        CfnOutput(self, "DbSecretArn",
+                  value=db_secret.secret_arn,
+                  description="RDS credentials secret ARN")
+        CfnOutput(self, "GitHubDeployRoleArn",
+                  value=github_deploy_role.role_arn,
+                  description="IAM role ARN for GitHub Actions OIDC")
+        CfnOutput(self, "EcsClusterName",
+                  value=cluster.cluster_name,
+                  description="ECS cluster name")
+        CfnOutput(self, "DistributionId",
+                  value=distribution.distribution_id,
+                  description="CloudFront distribution ID")
