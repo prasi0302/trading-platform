@@ -33,3 +33,4 @@ aidlc-docs/
 
 # Kiro
 .kiro/
+setup/config.env
