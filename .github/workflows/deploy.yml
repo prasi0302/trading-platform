@@ -1,0 +1,249 @@
+name: Trading Platform CI/CD
+
+# This workflow builds, tests, and deploys the trading platform's six
+# microservices and frontend on every push to main. It uses OIDC federation
+# to assume the GitHub deploy role provisioned by the CDK stack
+# (TradingAppStack/GitHubDeployRole) and reads deployment targets from
+# repository-level GitHub Actions Variables.
+#
+# Required repository secrets:
+#   AWS_DEPLOY_ROLE_ARN          - ARN of the GitHubDeployRole (CFN output)
+#   DEVOPS_AGENT_WEBHOOK_URL     - Webhook URL from your AWS DevOps Agent space
+#   DEVOPS_AGENT_WEBHOOK_SECRET  - Webhook signing secret from your DevOps Agent space
+#
+# Required repository variables:
+#   AWS_REGION          (default: us-east-1)
+#   ECR_REGISTRY        e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com
+#   ECS_CLUSTER         ECS cluster name from the CDK output (EcsClusterName)
+#   ALB_DNS             ALB DNS name from the CDK output (AlbUrl, without scheme)
+#   CF_URL              CloudFront URL from the CDK output (CloudFrontUrl)
+#   FRONTEND_BUCKET     S3 bucket name from the CDK output (FrontendBucketName)
+#   CF_DISTRIBUTION_ID  CloudFront distribution ID from the CDK output (DistributionId)
+#
+# All third-party actions are pinned to a full-length commit SHA; the comment
+# beside each pin records the human-readable version.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+jobs:
+  test:
+    name: test (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [market-data, order, portfolio, alert, ws-gateway]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11"
+      - name: Install and test
+        run: |
+          pip install -e libs/common
+          cd "services/${{ matrix.service }}"
+          if grep -q '\[project.optional-dependencies\]' pyproject.toml; then
+            pip install -e ".[dev]"
+          else
+            pip install -e .
+          fi
+          if [ -d tests ]; then
+            pytest tests/ -v
+          else
+            echo "No tests directory; skipping pytest for ${{ matrix.service }}"
+          fi
+
+  test-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "20"
+      - run: cd frontend && npm ci && npx tsc --noEmit
+
+  build:
+    name: build (${{ matrix.service }})
+    needs: [test]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [market-data, order, portfolio, alert, ws-gateway]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: aws-actions/configure-aws-credentials@b47578312673ae6fa5b630753e1cee6dad0866a3 # v4.2.1
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@062b18b96a7aff071d4dc91bc00c4c1a7945b076 # v2.0.1
+      - name: Build and push image
+        env:
+          ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+        run: |
+          IMAGE="${ECR_REGISTRY}/trading-${{ matrix.service }}"
+          docker build --platform linux/amd64 \
+            -t "${IMAGE}:${{ github.sha }}" \
+            -t "${IMAGE}:latest" \
+            -f "services/${{ matrix.service }}/Dockerfile" .
+          docker push "${IMAGE}:${{ github.sha }}"
+          docker push "${IMAGE}:latest"
+
+  build-ui:
+    needs: [test-ui]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "20"
+      - uses: aws-actions/configure-aws-credentials@b47578312673ae6fa5b630753e1cee6dad0866a3 # v4.2.1
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - run: cd frontend && npm ci && npx vite build
+      - name: Upload to S3
+        run: aws s3 sync frontend/dist/ "s3://${{ vars.FRONTEND_BUCKET }}/" --delete
+      - name: Invalidate CloudFront
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ vars.CF_DISTRIBUTION_ID }}" \
+            --paths "/*" >/dev/null
+
+  deploy:
+    name: deploy (${{ matrix.service }})
+    needs: [build]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [market-data, order, portfolio, alert, ws-gateway]
+    steps:
+      - uses: aws-actions/configure-aws-credentials@b47578312673ae6fa5b630753e1cee6dad0866a3 # v4.2.1
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Resolve ECS service name
+        id: resolve
+        env:
+          ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+        run: |
+          case "${{ matrix.service }}" in
+            market-data) NEEDLE="MarketDataService" ;;
+            order)       NEEDLE="OrderService" ;;
+            portfolio)   NEEDLE="PortfolioService" ;;
+            alert)       NEEDLE="AlertService" ;;
+            ws-gateway)  NEEDLE="WsGatewayService" ;;
+          esac
+          SERVICE_ARN=$(aws ecs list-services --cluster "$ECS_CLUSTER" \
+            --query "serviceArns[?contains(@,'${NEEDLE}')]|[0]" --output text)
+          if [ -z "$SERVICE_ARN" ] || [ "$SERVICE_ARN" = "None" ]; then
+            echo "Could not find ECS service matching $NEEDLE in cluster $ECS_CLUSTER" >&2
+            exit 1
+          fi
+          echo "service_arn=${SERVICE_ARN}" >> "$GITHUB_OUTPUT"
+      - name: Update ECS service with new image
+        env:
+          ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+          ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+          SERVICE_ARN: ${{ steps.resolve.outputs.service_arn }}
+        run: |
+          IMAGE="${ECR_REGISTRY}/trading-${{ matrix.service }}:${{ github.sha }}"
+          TASK_DEF=$(aws ecs describe-services --cluster "$ECS_CLUSTER" \
+            --services "$SERVICE_ARN" \
+            --query 'services[0].taskDefinition' --output text)
+          NEW_TASK_DEF=$(aws ecs describe-task-definition --task-definition "$TASK_DEF" \
+            --query 'taskDefinition' \
+            | jq --arg IMG "$IMAGE" '.containerDefinitions[0].image = $IMG
+                | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                      .compatibilities, .registeredAt, .registeredBy)')
+          NEW_ARN=$(aws ecs register-task-definition \
+            --cli-input-json "$NEW_TASK_DEF" \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$SERVICE_ARN" \
+            --task-definition "$NEW_ARN" \
+            --force-new-deployment >/dev/null
+
+  verify:
+    needs: [deploy, build-ui]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for deployment
+        run: sleep 60
+      - name: Probe API endpoints
+        env:
+          ALB_DNS: ${{ vars.ALB_DNS }}
+        run: |
+          set -e
+          curl -fsS "http://${ALB_DNS}/api/symbols" | head -c 200
+          curl -fsS "http://${ALB_DNS}/api/orders?session_id=health" | head -c 200
+          curl -fsS "http://${ALB_DNS}/api/portfolio?session_id=health" | head -c 200
+          curl -fsS "http://${ALB_DNS}/api/alerts?session_id=health" | head -c 200
+      - name: Probe frontend
+        env:
+          CF_URL: ${{ vars.CF_URL }}
+        run: curl -fsS "${CF_URL}/" -o /dev/null
+
+  notify-devops-agent:
+    needs: [test, test-ui, build, build-ui, deploy, verify]
+    if: ${{ always() && contains(needs.*.result, 'failure') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send failure webhook
+        env:
+          WEBHOOK_URL: ${{ secrets.DEVOPS_AGENT_WEBHOOK_URL }}
+          WEBHOOK_SECRET: ${{ secrets.DEVOPS_AGENT_WEBHOOK_SECRET }}
+        run: |
+          if [ -z "$WEBHOOK_URL" ] || [ -z "$WEBHOOK_SECRET" ]; then
+            echo "DevOps Agent webhook is not configured; skipping notification."
+            exit 0
+          fi
+          TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
+          INCIDENT_ID="github-run-${{ github.run_id }}"
+          PAYLOAD=$(jq -nc \
+            --arg id "$INCIDENT_ID" \
+            --arg title "Pipeline failed: ${{ github.workflow }} (run #${{ github.run_number }})" \
+            --arg desc "GitHub Actions workflow '${{ github.workflow }}' failed in ${{ github.repository }}. Commit: ${{ github.sha }}. Branch: ${{ github.ref_name }}. https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --arg ts "$TIMESTAMP" \
+            --arg repo "${{ github.repository }}" \
+            --arg run "${{ github.run_id }}" \
+            --arg sha "${{ github.sha }}" \
+            --arg branch "${{ github.ref_name }}" \
+            '{
+              eventType: "incident",
+              incidentId: $id,
+              action: "created",
+              priority: "HIGH",
+              title: $title,
+              description: $desc,
+              service: "trading-platform",
+              timestamp: $ts,
+              data: { metadata: {
+                region: "us-east-1",
+                environment: "production",
+                repository: $repo,
+                run_id: $run,
+                commit_sha: $sha,
+                branch: $branch
+              }}
+            }')
+          SIGNATURE=$(printf '%s' "${TIMESTAMP}:${PAYLOAD}" \
+            | openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" -binary | base64)
+          curl -fsS -X POST "$WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -H "x-amzn-event-timestamp: ${TIMESTAMP}" \
+            -H "x-amzn-event-signature: ${SIGNATURE}" \
+            -d "$PAYLOAD"
+          echo "DevOps Agent investigation triggered for run ${{ github.run_id }}"

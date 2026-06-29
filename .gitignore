@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+frontend/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Environment
+.env
+.env.local
+
+# CDK
+infra/cdk.out/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# AI-DLC docs (not needed in GitLab)
+aidlc-docs/
+
+# Kiro
+.kiro/
+
+# CDK context cache (regenerated per account at synth time)
+infra/cdk.context.json

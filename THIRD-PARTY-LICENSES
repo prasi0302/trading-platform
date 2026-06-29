@@ -1,0 +1,79 @@
+## Third-Party Licenses
+
+This sample uses the following third-party software components. The full
+license text for each component is available in the upstream project
+repository linked below.
+
+### Python (services and shared libraries)
+
+| Package           | License                            | Source                                            |
+|-------------------|------------------------------------|---------------------------------------------------|
+| fastapi           | MIT                                | https://github.com/fastapi/fastapi                |
+| uvicorn           | BSD-3-Clause                       | https://github.com/encode/uvicorn                 |
+| pydantic          | MIT                                | https://github.com/pydantic/pydantic              |
+| sqlalchemy        | MIT                                | https://github.com/sqlalchemy/sqlalchemy          |
+| asyncpg           | Apache-2.0                         | https://github.com/MagicStack/asyncpg             |
+| alembic           | MIT                                | https://github.com/sqlalchemy/alembic             |
+| redis (redis-py)  | MIT                                | https://github.com/redis/redis-py                 |
+| hiredis           | BSD-3-Clause                       | https://github.com/redis/hiredis-py               |
+| aioboto3          | Apache-2.0                         | https://github.com/terricain/aioboto3             |
+| httpx             | BSD-3-Clause                       | https://github.com/encode/httpx                   |
+| websockets        | BSD-3-Clause                       | https://github.com/python-websockets/websockets   |
+| numpy             | BSD-3-Clause                       | https://github.com/numpy/numpy                    |
+
+### Python (development / test only — not in production images)
+
+| Package           | License        | Source                                       |
+|-------------------|----------------|----------------------------------------------|
+| pytest            | MIT            | https://github.com/pytest-dev/pytest         |
+| pytest-asyncio    | Apache-2.0     | https://github.com/pytest-dev/pytest-asyncio |
+| moto              | Apache-2.0     | https://github.com/getmoto/moto              |
+
+### JavaScript / TypeScript (frontend)
+
+| Package                  | License           | Source                                                  |
+|--------------------------|-------------------|---------------------------------------------------------|
+| react                    | MIT               | https://github.com/facebook/react                       |
+| react-dom                | MIT               | https://github.com/facebook/react                       |
+| react-router-dom         | MIT               | https://github.com/remix-run/react-router               |
+| lightweight-charts       | Apache-2.0        | https://github.com/tradingview/lightweight-charts       |
+| vite                     | MIT               | https://github.com/vitejs/vite                          |
+| @vitejs/plugin-react     | MIT               | https://github.com/vitejs/vite-plugin-react             |
+| typescript               | Apache-2.0        | https://github.com/microsoft/TypeScript                 |
+| esbuild                  | MIT               | https://github.com/evanw/esbuild                        |
+
+### Container base images
+
+| Image                              | Source                                              |
+|------------------------------------|-----------------------------------------------------|
+| python:3.11-slim                   | https://hub.docker.com/_/python (PSF, OS components GPL/LGPL/MIT) |
+| node:20-alpine                     | https://hub.docker.com/_/node (MIT)                 |
+| nginx:alpine                       | https://hub.docker.com/_/nginx (BSD-2-Clause)       |
+| redis:7-alpine                     | https://hub.docker.com/_/redis (BSD-3-Clause, dev only) |
+| localstack/localstack              | https://hub.docker.com/r/localstack/localstack (Apache-2.0, dev only) |
+
+### AWS CDK and infrastructure tools
+
+| Package           | License        | Source                                       |
+|-------------------|----------------|----------------------------------------------|
+| aws-cdk-lib       | Apache-2.0     | https://github.com/aws/aws-cdk               |
+| constructs        | Apache-2.0     | https://github.com/aws/constructs            |
+
+### GitHub Actions used in CI/CD
+
+All third-party actions used in `.github/workflows/deploy.yml` are pinned to
+full-length commit SHAs. Each pin is annotated with the matching version
+number in a trailing comment.
+
+| Action                                  | License        |
+|-----------------------------------------|----------------|
+| actions/checkout                        | MIT            |
+| actions/setup-python                    | MIT            |
+| actions/setup-node                      | MIT            |
+| aws-actions/configure-aws-credentials   | Apache-2.0     |
+| aws-actions/amazon-ecr-login            | MIT            |
+| docker/setup-buildx-action              | Apache-2.0     |
+| docker/build-push-action                | Apache-2.0     |
+
+This sample is licensed under MIT-0; see [LICENSE](LICENSE) for the full
+license text.

@@ -1,0 +1,67 @@
+version: "3.8"
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+      - /var/run
+    # Redis needs a writable dir for RDB/AOF if persistence is enabled. We
+    # disable persistence for local dev so /data does not need to be writable.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  localstack:
+    image: localstack/localstack:latest
+    ports:
+      - "4566:4566"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    # LocalStack writes runtime state under /var/lib/localstack and /tmp
+    tmpfs:
+      - /tmp
+      - /var/run
+    volumes:
+      - "localstack-data:/var/lib/localstack"
+      - "./scripts/localstack-init.sh:/etc/localstack/init/ready.d/init.sh:ro"
+    environment:
+      - SERVICES=dynamodb,s3
+      - DEFAULT_REGION=us-east-1
+
+  market-data:
+    build:
+      context: .
+      dockerfile: services/market-data/Dockerfile
+    ports:
+      - "8001:8001"
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      - PORT=8001
+      - TICK_INTERVAL_MS=1000
+      - REDIS_URL=redis://redis:6379
+      - DYNAMODB_TABLE=market-data-ticks
+      - S3_BUCKET=trading-app-historical
+      - AWS_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_ENDPOINT_URL=http://localstack:4566
+      - LOG_LEVEL=INFO
+    depends_on:
+      redis:
+        condition: service_healthy
+      localstack:
+        condition: service_started
+
+volumes:
+  localstack-data:
