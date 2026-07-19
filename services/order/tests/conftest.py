@@ -1,4 +1,15 @@
-"""Shared test fixtures for Order Service tests."""
+"""Shared test fixtures for Order Service tests.
+
+The os.environ.setdefault below defends against ISS-005 (module-level
+DATABASE_URL construction in app/config.py raises when DB_PASSWORD is
+unset). Order's current tests happen not to import app.config, so the
+defect is latent here — but any future test that does would fail at
+collection time in CI. Unit tests never open a database connection.
+"""
+
+import os
+
+os.environ.setdefault("DB_PASSWORD", "test")
 
 from datetime import datetime, timezone
 
