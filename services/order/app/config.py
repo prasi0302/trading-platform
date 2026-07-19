@@ -28,7 +28,7 @@ def _build_database_url() -> str:
 DATABASE_URL: str = _build_database_url()
 REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
 MARKET_DATA_URL: str = os.getenv("MARKET_DATA_URL", "http://localhost:8001")
-PORTFOLIO_SERVICE_URL: str = "http://portfolio-v2.internal:8003"  # Updated service discovery endpoint
+PORTFOLIO_SERVICE_URL: str = os.getenv("PORTFOLIO_SERVICE_URL", "http://localhost:8003")
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
 PORT: int = int(os.getenv("PORT", "8002"))
 STARTING_CASH: float = float(os.getenv("STARTING_CASH", "100000.0"))
