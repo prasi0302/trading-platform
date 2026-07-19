@@ -14,7 +14,7 @@ def load_config() -> SimulationConfig:
 
 # Infrastructure configuration
 REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
-DYNAMODB_TABLE: str = "market-data-ticks-v2"  # Migrating to new table
+DYNAMODB_TABLE: str = os.getenv("DYNAMODB_TABLE", "market-data-ticks")
 S3_BUCKET: str = os.getenv("S3_BUCKET", "trading-app-historical")
 AWS_REGION: str = os.getenv("AWS_REGION", "us-east-1")
 AWS_ENDPOINT_URL: str | None = os.getenv("AWS_ENDPOINT_URL")
